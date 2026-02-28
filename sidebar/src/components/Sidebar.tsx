@@ -1,6 +1,6 @@
-import { VerificationBar } from './VerificationBar';
-import { ClaimCard } from './ClaimCard';
-import { LoadingSkeleton } from './LoadingSkeleton';
+import { VerificationBar } from './VerificationBar.js';
+import { ClaimCard } from './ClaimCard.js';
+import { LoadingSkeleton } from './LoadingSkeleton.js';
 
 export interface Claim {
   id: number;
