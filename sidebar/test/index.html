@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Sidebar Dev Harness</title>
+  <style>
+    body { background: #0f0f0f; margin: 0; display: flex; justify-content: flex-end; padding: 12px; }
+    #sidebar-container { width: 380px; height: calc(100vh - 24px); }
+    #controls { position: fixed; left: 12px; top: 12px; display: flex; flex-direction: column; gap: 8px; }
+    #controls button { padding: 8px 16px; background: #333; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    #controls button:hover { background: #444; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <button onclick="showLoading()">Loading</button>
+    <button onclick="showResult()">Result</button>
+    <button onclick="showNoTranscript()">No Transcript</button>
+    <button onclick="showError()">Error</button>
+    <button onclick="showNoClaims()">No Claims</button>
+  </div>
+  <div id="sidebar-container"></div>
+  <script src="../dist/sidebar.bundle.js"></script>
+  <script>
+    window.mountFactCheckSidebar(document.getElementById('sidebar-container'));
+
+    var mockData = {
+      metadata: { title: "5 Foods That Are Secretly Destroying Your Health", channel: "HealthTruth" },
+      overallScore: 0.35,
+      claims: [
+        {
+          id: 1,
+          text: "Microwave ovens destroy 90% of nutrients in food",
+          verdict: "refuted",
+          confidence: "high",
+          explanation: "Multiple studies show microwaving retains similar or more nutrients compared to other cooking methods due to shorter cooking times.",
+          sources: [{ title: "Harvard Health Publishing", url: "https://health.harvard.edu/microwave", snippet: "Microwave cooking retains more nutrients than some other methods..." }]
+        },
+        {
+          id: 2,
+          text: "The WHO classified processed meat as a Group 1 carcinogen in 2015",
+          verdict: "supported",
+          confidence: "high",
+          explanation: "The IARC (part of WHO) did classify processed meat as Group 1 in October 2015.",
+          sources: [{ title: "WHO - IARC Monographs", url: "https://who.int/iarc", snippet: "Processed meat classified as carcinogenic to humans (Group 1)..." }]
+        },
+        {
+          id: 3,
+          text: "Eating bananas at night causes weight gain",
+          verdict: "unclear",
+          confidence: "low",
+          explanation: "No strong evidence found. Weight gain depends on total caloric intake, not timing of specific foods.",
+          sources: [],
+          what_to_check_next: "Look for clinical studies on meal timing and weight"
+        }
+      ],
+      transcriptPreview: "Hey guys, today I want to talk about five foods that are secretly destroying your health..."
+    };
+
+    function onClose() { console.log('Sidebar close requested'); }
+
+    function showLoading() { window.updateFactCheckSidebar({ state: 'loading', onClose: onClose }); }
+    function showResult() { window.updateFactCheckSidebar({ state: 'result', ...mockData, onClose: onClose }); }
+    function showNoTranscript() { window.updateFactCheckSidebar({ state: 'no_transcript', metadata: mockData.metadata, onClose: onClose }); }
+    function showError() { window.updateFactCheckSidebar({ state: 'error', errorMessage: 'Backend timeout', onClose: onClose }); }
+    function showNoClaims() { window.updateFactCheckSidebar({ state: 'result', metadata: mockData.metadata, overallScore: null, claims: [], onClose: onClose }); }
+
+    showResult();
+  </script>
+</body>
+</html>
