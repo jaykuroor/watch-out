@@ -242,7 +242,7 @@ function createAndInsertButton(container) {
       margin-top: -4px;
       margin-bottom: 12px;
       font-family: 'Roboto', Arial, sans-serif;
-    ">Fact Check</span>
+    ">Verify</span>
   `;
   triggerButton.style.cssText = `
     background: none;
