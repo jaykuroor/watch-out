@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Shorts Fact-Checker",
+  "version": "0.1.0",
+  "description": "Fact-check YouTube Shorts claims in real-time",
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.youtube.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["dist/sidebar.bundle.js", "content.js"],
+      "css": [],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
