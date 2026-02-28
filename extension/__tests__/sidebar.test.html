@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Sidebar.js Tests</title>
+  <style>
+    body { background: #111; color: #eee; font-family: monospace; padding: 20px; margin: 0; }
+    .pass { color: #22c55e; }
+    .fail { color: #ef4444; }
+    .suite { margin: 16px 0 4px; font-weight: bold; font-size: 14px; color: #60a5fa; }
+    .test { margin: 2px 0 2px 16px; font-size: 13px; }
+    #summary { margin-top: 20px; padding: 12px; border-radius: 8px; font-size: 14px; font-weight: bold; }
+    #sidebar-mount { width: 380px; height: 600px; position: fixed; right: 12px; top: 12px; }
+  </style>
+</head>
+<body>
+  <h2>Watch Out — Sidebar Unit Tests</h2>
+  <div id="results"></div>
+  <div id="summary"></div>
+  <div id="sidebar-mount" style="display:none;"></div>
+
+  <script src="../sidebar.js"></script>
+  <script>
+    // ── Tiny test runner ──
+    let _passed = 0, _failed = 0;
+    const _results = document.getElementById('results');
+
+    function suite(name) {
+      const d = document.createElement('div');
+      d.className = 'suite';
+      d.textContent = name;
+      _results.appendChild(d);
+    }
+
+    function assert(condition, name) {
+      const d = document.createElement('div');
+      d.className = 'test';
+      if (condition) {
+        d.innerHTML = '<span class="pass">PASS</span> ' + name;
+        _passed++;
+      } else {
+        d.innerHTML = '<span class="fail">FAIL</span> ' + name;
+        _failed++;
+        console.error('FAIL:', name);
+      }
+      _results.appendChild(d);
+    }
+
+    function finish() {
+      const s = document.getElementById('summary');
+      const total = _passed + _failed;
+      if (_failed === 0) {
+        s.style.background = 'rgba(34,197,94,0.15)';
+        s.style.color = '#22c55e';
+        s.textContent = 'ALL ' + total + ' TESTS PASSED';
+      } else {
+        s.style.background = 'rgba(239,68,68,0.15)';
+        s.style.color = '#ef4444';
+        s.textContent = _failed + ' of ' + total + ' tests FAILED';
+      }
+      // For CI / headless runners
+      console.log('Test results:', _passed, 'passed,', _failed, 'failed');
+      window.__TEST_RESULTS = { passed: _passed, failed: _failed };
+    }
+
+    // ── Helpers ──
+    const container = document.getElementById('sidebar-mount');
+
+    function reset() {
+      container.innerHTML = '';
+      window.mountFactCheckSidebar(container);
+    }
+
+    function q(sel) { return container.querySelector(sel); }
+    function qAll(sel) { return container.querySelectorAll(sel); }
+    function textIncludes(txt) { return container.textContent.includes(txt); }
+
+    // ── Tests ──
+
+    suite('mountFactCheckSidebar');
+
+    assert(typeof window.mountFactCheckSidebar === 'function', 'mountFactCheckSidebar is a function');
+    assert(typeof window.updateFactCheckSidebar === 'function', 'updateFactCheckSidebar is a function');
+
+    reset();
+    assert(container.children.length === 0, 'idle state renders nothing');
+
+    // ── Loading state ──
+
+    suite('Loading state');
+    reset();
+    window.updateFactCheckSidebar({ state: 'loading' });
+
+    assert(container.children.length > 0, 'loading state renders content');
+    assert(textIncludes('Watch Out'), 'header shows "Watch Out" brand name');
+    assert(textIncludes('Analyzing claims...'), 'shows "Analyzing claims..." text');
+    assert(q('[aria-label="Close sidebar"]') !== null, 'close button exists');
+
+    // ── Close button dispatches event ──
+
+    suite('Close button');
+    reset();
+    window.updateFactCheckSidebar({ state: 'loading' });
+
+    let closeFired = false;
+    function onClose() { closeFired = true; }
+    window.addEventListener('factcheck-close-sidebar', onClose);
+    q('[aria-label="Close sidebar"]').click();
+    window.removeEventListener('factcheck-close-sidebar', onClose);
+    assert(closeFired, 'close button dispatches factcheck-close-sidebar event');
+
+    // ── Result state with claims ──
+
+    suite('Result state with claims');
+    reset();
+    window.updateFactCheckSidebar({
+      state: 'result',
+      metadata: { title: 'Test Video Title', channel: 'TestChannel' },
+      overallScore: 0.72,
+      claims: [
+        {
+          id: 1, text: 'Claim one text', verdict: 'supported', confidence: 'high',
+          explanation: 'This is supported by evidence.',
+          sources: [{ title: 'Source A', url: 'https://example.com', snippet: 'Example snippet' }],
+        },
+        {
+          id: 2, text: 'Claim two text', verdict: 'refuted', confidence: 'med',
+          explanation: 'This is contradicted by evidence.',
+          sources: [],
+        },
+        {
+          id: 3, text: 'Claim three text', verdict: 'unclear', confidence: 'low',
+          explanation: 'Not enough evidence.',
+          sources: [],
+          what_to_check_next: 'Try checking XYZ',
+        },
+      ],
+    });
+
+    assert(textIncludes('Watch Out'), 'header shows "Watch Out" brand');
+    assert(textIncludes('Test Video Title'), 'metadata title is rendered');
+    assert(textIncludes('TestChannel'), 'metadata channel is rendered');
+    assert(textIncludes('72%'), 'verification bar shows score percentage');
+    assert(textIncludes('Mostly Supported'), 'verification bar shows correct label');
+    assert(textIncludes('3 claims analyzed'), 'claim count header is shown');
+    assert(textIncludes('Claim one text'), 'first claim text is rendered');
+    assert(textIncludes('Claim two text'), 'second claim text is rendered');
+    assert(textIncludes('Claim three text'), 'third claim text is rendered');
+    assert(textIncludes('Supported'), 'supported verdict label shown');
+    assert(textIncludes('Refuted'), 'refuted verdict label shown');
+    assert(textIncludes('Unclear'), 'unclear verdict label shown');
+
+    // ── Claim card expand/collapse ──
+
+    suite('Claim card expand/collapse');
+
+    const claimBtns = qAll('[role="button"]');
+    assert(claimBtns.length === 3, 'three claim card buttons exist');
+
+    const firstBtn = claimBtns[0];
+    assert(firstBtn.getAttribute('aria-expanded') === 'false', 'claim starts collapsed');
+    assert(!textIncludes('This is supported by evidence.'), 'explanation hidden when collapsed');
+
+    firstBtn.click();
+    assert(firstBtn.getAttribute('aria-expanded') === 'true', 'claim expands on click');
+    assert(textIncludes('This is supported by evidence.'), 'explanation visible when expanded');
+    assert(textIncludes('Source A'), 'source title shown when expanded');
+
+    firstBtn.click();
+    assert(firstBtn.getAttribute('aria-expanded') === 'false', 'claim collapses on second click');
+
+    // Expand unclear claim to check what_to_check_next
+    claimBtns[2].click();
+    assert(textIncludes('Try checking XYZ'), 'what_to_check_next shown for unclear claim');
+    claimBtns[2].click();
+
+    // ── Verification bar score thresholds ──
+
+    suite('Verification bar score thresholds');
+
+    reset();
+    window.updateFactCheckSidebar({
+      state: 'result', overallScore: 0.9,
+      claims: [{ id: 1, text: 'X', verdict: 'supported', confidence: 'high', explanation: 'Y', sources: [] }],
+    });
+    assert(textIncludes('90%'), 'score 0.9 shows 90%');
+    assert(textIncludes('Well Supported'), 'score 0.9 shows "Well Supported"');
+
+    reset();
+    window.updateFactCheckSidebar({
+      state: 'result', overallScore: 0.15,
+      claims: [{ id: 1, text: 'X', verdict: 'refuted', confidence: 'high', explanation: 'Y', sources: [] }],
+    });
+    assert(textIncludes('15%'), 'score 0.15 shows 15%');
+    assert(textIncludes('Likely Misleading'), 'score 0.15 shows "Likely Misleading"');
+
+    // ── No claims ──
+
+    suite('Result state with no claims');
+    reset();
+    window.updateFactCheckSidebar({ state: 'result', overallScore: null, claims: [] });
+    assert(textIncludes('No verifiable factual claims found'), 'no-claims message shown');
+
+    // ── Error state ──
+
+    suite('Error state');
+    reset();
+    window.updateFactCheckSidebar({ state: 'error', errorMessage: 'Backend timeout' });
+    assert(textIncludes('Something went wrong'), 'error header shown');
+    assert(textIncludes('Backend timeout'), 'custom error message shown');
+
+    reset();
+    window.updateFactCheckSidebar({ state: 'error' });
+    assert(textIncludes('Failed to analyze this Short'), 'default error message shown');
+
+    // ── No transcript state ──
+
+    suite('No transcript state');
+    reset();
+    window.updateFactCheckSidebar({ state: 'no_transcript', metadata: { title: 'NoCaps', channel: 'Ch' } });
+    assert(textIncludes('No Transcript Available'), 'no transcript message shown');
+    assert(textIncludes('NoCaps'), 'metadata still shown in no_transcript state');
+
+    // ── State transitions ──
+
+    suite('State transitions');
+    reset();
+    window.updateFactCheckSidebar({ state: 'loading' });
+    assert(textIncludes('Analyzing claims...'), 'starts in loading');
+
+    window.updateFactCheckSidebar({
+      state: 'result', overallScore: 0.5,
+      claims: [{ id: 1, text: 'Transitioned claim', verdict: 'unclear', confidence: 'med', explanation: 'E', sources: [] }],
+    });
+    assert(!textIncludes('Analyzing claims...'), 'loading text gone after transition');
+    assert(textIncludes('Transitioned claim'), 'result content shown after transition');
+
+    window.updateFactCheckSidebar({ state: 'idle' });
+    assert(container.children.length === 0, 'idle clears all content');
+
+    // ── Keyboard accessibility ──
+
+    suite('Keyboard accessibility');
+    reset();
+    window.updateFactCheckSidebar({
+      state: 'result', overallScore: 0.5,
+      claims: [{ id: 1, text: 'KB claim', verdict: 'supported', confidence: 'high', explanation: 'KB explanation', sources: [] }],
+    });
+    const kbBtn = q('[role="button"]');
+    assert(kbBtn.getAttribute('tabindex') === '0', 'claim button has tabindex 0');
+
+    // Simulate Enter key
+    kbBtn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    assert(kbBtn.getAttribute('aria-expanded') === 'true', 'Enter key expands claim');
+    assert(textIncludes('KB explanation'), 'explanation shown after Enter key');
+
+    // Simulate Space key
+    kbBtn.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    assert(kbBtn.getAttribute('aria-expanded') === 'false', 'Space key collapses claim');
+
+    // ── Source links ──
+
+    suite('Source links');
+    reset();
+    window.updateFactCheckSidebar({
+      state: 'result', overallScore: 0.8,
+      claims: [{
+        id: 1, text: 'Link claim', verdict: 'supported', confidence: 'high',
+        explanation: 'Has links',
+        sources: [
+          { title: 'Link Title', url: 'https://example.com/test', snippet: 'Link snippet text' },
+        ],
+      }],
+    });
+    q('[role="button"]').click();
+    const link = q('a[href="https://example.com/test"]');
+    assert(link !== null, 'source link rendered with correct href');
+    assert(link.getAttribute('target') === '_blank', 'source link opens in new tab');
+    assert(link.getAttribute('rel') === 'noopener noreferrer', 'source link has security rel');
+    assert(textIncludes('Link Title'), 'source title shown');
+    assert(textIncludes('Link snippet text'), 'source snippet shown');
+
+    // ── Done ──
+    finish();
+  </script>
+</body>
+</html>

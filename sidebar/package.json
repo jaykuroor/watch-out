@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:ext": "vite build && cp dist/sidebar.bundle.js ../extension/dist/sidebar.bundle.js",
+    "build:watch": "vite build --watch",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run"
