@@ -16,3 +16,6 @@ backend/.next/
 tasks/lessons.md
 CLAUDE.md
 backend/scripts/benchmark-results/raw-*.json
+package-lock.json
+backend/package-lock.json
+backend/tsconfig.tsbuildinfo
