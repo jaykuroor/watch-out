@@ -14,3 +14,5 @@ captions/
 backend/.env.local
 backend/.next/
 tasks/lessons.md
+CLAUDE.md
+backend/scripts/benchmark-results/raw-*.json
