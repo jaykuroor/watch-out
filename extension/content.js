@@ -8,11 +8,25 @@ let sidebarContainer = null;
 let triggerButton = null;
 let injectRetryCount = 0;
 const MAX_INJECT_RETRIES = 20;
+const NAVIGATION_DEBOUNCE_MS = 220;
+const REQUEST_COOLDOWN_MS = 1000;
+const LOADING_TIMEOUT_MS = 30000;
 
 // Local result cache — analysis starts on navigation, results stored here
 // so the sidebar can display instantly when opened.
 let cachedResults = {};
 let pendingVideoIds = new Set();
+let loadingWatchdogs = new Map();
+let extensionContextInvalidated = false;
+let navigationDebounceTimer = null;
+let lastRequestedVideoId = null;
+let lastRequestedAtMs = 0;
+const SUPPORTED_MODELS = new Set([
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-pro',
+  'gemini-3-flash-preview',
+]);
 
 log('Content script loaded on', window.location.href);
 
@@ -30,14 +44,14 @@ function isOnShortsPage() {
 // Strategy 1: YouTube SPA navigation event
 document.addEventListener('yt-navigate-finish', () => {
   log('yt-navigate-finish fired');
-  handleNavigationChange();
+  scheduleNavigationChange();
 });
 
 // Strategy 2: MutationObserver on the shorts container
 const reelObserver = new MutationObserver((mutations) => {
   for (const mutation of mutations) {
     if (mutation.type === 'childList' || mutation.type === 'attributes') {
-      handleNavigationChange();
+      scheduleNavigationChange();
       break;
     }
   }
@@ -75,7 +89,7 @@ setInterval(() => {
   if (id && id !== lastPolledVideoId) {
     lastPolledVideoId = id;
     log('Polling detected new videoId:', id);
-    handleNavigationChange();
+    scheduleNavigationChange();
   }
 
   startReelObserver();
@@ -83,7 +97,17 @@ setInterval(() => {
 
 // ----- NAVIGATION HANDLER -----
 
+function scheduleNavigationChange() {
+  if (extensionContextInvalidated) return;
+  if (navigationDebounceTimer) clearTimeout(navigationDebounceTimer);
+  navigationDebounceTimer = setTimeout(() => {
+    navigationDebounceTimer = null;
+    handleNavigationChange();
+  }, NAVIGATION_DEBOUNCE_MS);
+}
+
 function handleNavigationChange() {
+  if (extensionContextInvalidated) return;
   if (!isOnShortsPage()) return;
 
   const videoId = getVideoIdFromUrl();
@@ -104,18 +128,127 @@ function handleNavigationChange() {
 
 // ----- ANALYSIS (decoupled from sidebar) -----
 
+function onExtensionContextInvalidated(error) {
+  if (extensionContextInvalidated) return;
+  extensionContextInvalidated = true;
+  warn('Extension context invalidated. Reload this YouTube tab to reconnect.', error);
+  pendingVideoIds.clear();
+  if (navigationDebounceTimer) {
+    clearTimeout(navigationDebounceTimer);
+    navigationDebounceTimer = null;
+  }
+  for (const timer of loadingWatchdogs.values()) clearTimeout(timer);
+  loadingWatchdogs.clear();
+
+  if (sidebarVisible && window.updateFactCheckSidebar) {
+    window.updateFactCheckSidebar({
+      state: 'error',
+      loadingMessage: null,
+      errorMessage: 'Extension reloaded or updated. Refresh this YouTube tab, then try again.',
+      contextInvalidated: true,
+    });
+  }
+}
+
+function sendAnalyzeMessage(payload) {
+  try {
+    if (extensionContextInvalidated || !chrome?.runtime?.id) {
+      throw new Error('Extension context invalidated');
+    }
+    chrome.runtime.sendMessage(payload, () => {
+      const lastErr = chrome.runtime?.lastError;
+      if (lastErr) {
+        warn('runtime.sendMessage lastError:', lastErr.message);
+        if (lastErr.message && /Extension context invalidated/i.test(lastErr.message)) {
+          onExtensionContextInvalidated(lastErr);
+        }
+      }
+    });
+    return true;
+  } catch (error) {
+    onExtensionContextInvalidated(error);
+    return false;
+  }
+}
+
 function triggerBackendAnalysis(videoId) {
+  if (extensionContextInvalidated) return;
   if (cachedResults[videoId] || pendingVideoIds.has(videoId)) {
     log('Skipping analysis — already cached or in-flight:', videoId);
     return;
   }
-  log('Auto-triggering analysis for', videoId);
+  const now = Date.now();
+  if (videoId === lastRequestedVideoId && now - lastRequestedAtMs < REQUEST_COOLDOWN_MS) {
+    log('Skipping duplicate request within cooldown for', videoId);
+    return;
+  }
+  const model = getModelOverride();
+  log('Auto-triggering analysis for', videoId, model ? `(model=${model})` : '');
   pendingVideoIds.add(videoId);
-  chrome.runtime.sendMessage({
+  const payload = {
     type: 'ANALYZE_SHORT',
     videoId: videoId,
+    priority: sidebarVisible ? 'high' : 'low',
+    ...(model && { model }),
+  };
+  const sent = sendAnalyzeMessage(payload);
+  if (!sent) {
+    pendingVideoIds.delete(videoId);
+  } else {
+    lastRequestedVideoId = videoId;
+    lastRequestedAtMs = now;
+  }
+}
+
+function regenerateCurrentVideo() {
+  if (extensionContextInvalidated) {
+    onExtensionContextInvalidated(new Error('Extension context invalidated'));
+    return;
+  }
+  if (!currentVideoId) {
+    warn('Regenerate ignored: no active Shorts video ID');
+    return;
+  }
+  const model = getModelOverride();
+  log('Regenerating analysis for', currentVideoId, model ? `(model=${model})` : '');
+  delete cachedResults[currentVideoId];
+  pendingVideoIds.delete(currentVideoId);
+  pendingVideoIds.add(currentVideoId);
+
+  if (sidebarVisible && window.updateFactCheckSidebar) {
+    window.updateFactCheckSidebar({
+      state: 'loading',
+      loadingMessage: 'Regenerating with fresh data...',
+      contextInvalidated: false,
+    });
+  }
+
+  const sent = sendAnalyzeMessage({
+    type: 'ANALYZE_SHORT',
+    videoId: currentVideoId,
     priority: 'high',
+    forceRefresh: true,
+    ...(model && { model }),
   });
+  if (!sent) {
+    pendingVideoIds.delete(currentVideoId);
+  } else {
+    lastRequestedVideoId = currentVideoId;
+    lastRequestedAtMs = Date.now();
+  }
+}
+
+function getModelOverride() {
+  const candidates = ['factcheck_model', 'watchout_model', 'factcheckModel', 'watchoutModel'];
+  try {
+    for (const key of candidates) {
+      const value = window.localStorage.getItem(key);
+      if (value && SUPPORTED_MODELS.has(value)) return value;
+    }
+  } catch (error) {
+    warn('Could not read model override from localStorage:', error);
+  }
+  return null;
 }
 
 function displayResult(videoId, data) {
@@ -126,11 +259,13 @@ function displayResult(videoId, data) {
     window.updateFactCheckSidebar({
       state: 'error',
       errorMessage: data.error || 'Analysis failed for this video.',
+      contextInvalidated: false,
     });
   } else if (data.status === 'no_transcript') {
     window.updateFactCheckSidebar({
       state: 'no_transcript',
       metadata: data.metadata,
+      contextInvalidated: false,
     });
   } else {
     window.updateFactCheckSidebar({
@@ -139,17 +274,57 @@ function displayResult(videoId, data) {
       overallScore: data.overallScore,
       claims: data.claims,
       transcriptPreview: data.transcript_preview,
+      loadingMessage: null,
+      contextInvalidated: false,
     });
   }
 }
 
 function showCurrentState() {
   if (!window.updateFactCheckSidebar) return;
+  if (extensionContextInvalidated) {
+    window.updateFactCheckSidebar({
+      state: 'error',
+      loadingMessage: null,
+      errorMessage: 'Extension context invalidated. Refresh this YouTube tab to continue.',
+      contextInvalidated: true,
+    });
+    return;
+  }
   if (currentVideoId && cachedResults[currentVideoId]) {
     displayResult(currentVideoId, cachedResults[currentVideoId]);
   } else {
-    window.updateFactCheckSidebar({ state: 'loading' });
+    window.updateFactCheckSidebar({
+      state: 'loading',
+      loadingMessage: 'Starting analysis...',
+      contextInvalidated: false,
+    });
   }
+}
+
+function clearLoadingWatchdog(videoId) {
+  const timer = loadingWatchdogs.get(videoId);
+  if (timer) {
+    clearTimeout(timer);
+    loadingWatchdogs.delete(videoId);
+  }
+}
+
+function startLoadingWatchdog(videoId) {
+  clearLoadingWatchdog(videoId);
+  const timer = setTimeout(() => {
+    loadingWatchdogs.delete(videoId);
+    pendingVideoIds.delete(videoId);
+    if (sidebarVisible && videoId === currentVideoId && window.updateFactCheckSidebar) {
+      window.updateFactCheckSidebar({
+        state: 'error',
+        loadingMessage: null,
+        errorMessage: 'Analysis timed out while scrolling. Try regenerate or pause briefly on this Short.',
+        contextInvalidated: false,
+      });
+    }
+  }, LOADING_TIMEOUT_MS);
+  loadingWatchdogs.set(videoId, timer);
 }
 
 // ----- FIND THE ACTIVE RENDERER -----
@@ -372,48 +547,71 @@ function closeSidebar() {
 }
 
 window.addEventListener('factcheck-close-sidebar', () => closeSidebar());
+window.addEventListener('factcheck-regenerate-current', () => regenerateCurrentVideo());
+window.addEventListener('error', (event) => {
+  const message = String(event?.error?.message || event?.message || '');
+  if (/Extension context invalidated/i.test(message)) {
+    event.preventDefault();
+    onExtensionContextInvalidated(event.error || new Error(message));
+  }
+});
 
 // ----- LISTEN FOR RESULTS FROM SERVICE WORKER -----
 
-chrome.runtime.onMessage.addListener((msg) => {
-  log('Received message:', msg.type, msg.videoId);
+if (chrome?.runtime?.onMessage?.addListener) {
+  chrome.runtime.onMessage.addListener((msg) => {
+    log('Received message:', msg.type, msg.videoId);
 
-  if (msg.type === 'ANALYSIS_RESULT' && msg.videoId) {
-    cachedResults[msg.videoId] = msg.data;
-    pendingVideoIds.delete(msg.videoId);
+    if (msg.type === 'ANALYSIS_RESULT' && msg.videoId) {
+      clearLoadingWatchdog(msg.videoId);
+      cachedResults[msg.videoId] = msg.data;
+      pendingVideoIds.delete(msg.videoId);
 
-    if (sidebarVisible && msg.videoId === currentVideoId) {
-      displayResult(msg.videoId, msg.data);
+      if (msg.videoId !== currentVideoId) {
+        log('Received stale ANALYSIS_RESULT for non-current video:', msg.videoId, 'current:', currentVideoId);
+      }
+
+      if (sidebarVisible && msg.videoId === currentVideoId) {
+        displayResult(msg.videoId, msg.data);
+      }
     }
-  }
 
-  if (msg.type === 'ANALYSIS_LOADING' && msg.videoId === currentVideoId) {
-    pendingVideoIds.add(msg.videoId);
-    if (sidebarVisible && window.updateFactCheckSidebar) {
-      window.updateFactCheckSidebar({ state: 'loading' });
-    }
-  }
-
-  if (msg.type === 'ANALYSIS_ERROR' && msg.videoId) {
-    pendingVideoIds.delete(msg.videoId);
-    cachedResults[msg.videoId] = {
-      status: 'error',
-      error: msg.error || 'Unknown error from backend',
-    };
-
-    if (sidebarVisible && msg.videoId === currentVideoId) {
-      if (window.updateFactCheckSidebar) {
+    if (msg.type === 'ANALYSIS_LOADING' && msg.videoId === currentVideoId) {
+      pendingVideoIds.add(msg.videoId);
+      startLoadingWatchdog(msg.videoId);
+      if (sidebarVisible && window.updateFactCheckSidebar) {
         window.updateFactCheckSidebar({
-          state: 'error',
-          errorMessage: msg.error || 'Analysis failed. Is the backend running on localhost:3000?',
+          state: 'loading',
+          loadingMessage: msg.message || 'Analyzing claims...',
+          contextInvalidated: false,
         });
       }
     }
-  }
-});
+
+    if (msg.type === 'ANALYSIS_ERROR' && msg.videoId) {
+      clearLoadingWatchdog(msg.videoId);
+      pendingVideoIds.delete(msg.videoId);
+      cachedResults[msg.videoId] = {
+        status: 'error',
+        error: msg.error || 'Unknown error from backend',
+      };
+
+      if (sidebarVisible && msg.videoId === currentVideoId) {
+        if (window.updateFactCheckSidebar) {
+          window.updateFactCheckSidebar({
+            state: 'error',
+            errorMessage: msg.error || 'Analysis failed. Is the backend running on localhost:3000?',
+            loadingMessage: null,
+            contextInvalidated: false,
+          });
+        }
+      }
+    }
+  });
+}
 
 // ----- INIT -----
 log('isOnShortsPage:', isOnShortsPage(), '| videoId:', getVideoIdFromUrl());
 if (isOnShortsPage()) {
-  handleNavigationChange();
+  scheduleNavigationChange();
 }
