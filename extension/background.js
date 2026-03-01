@@ -116,7 +116,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     progressTimers.push(setTimeout(() => sendLoading('Searching trusted web sources...'), 4200));
     progressTimers.push(setTimeout(() => sendLoading('Verifying claims against evidence...'), 6800));
     progressTimers.push(setTimeout(() => sendLoading('Finalizing report...'), 9800));
-    const requestWatchdogMs = priority === 'low' ? 20000 : 32000;
+    const requestWatchdogMs = priority === 'low' ? 40000 : 38000;
     watchdogTimer = setTimeout(() => {
       if (settled) return;
       const activeVersion = requestVersion.get(videoId);
@@ -181,8 +181,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        memoryCache.set(videoId, data);
-        chrome.storage.local.set({ [videoId]: data });
+        // Only cache good results — don't persist transient errors so retries get a fresh shot
+        if (data.status !== 'error') {
+          memoryCache.set(videoId, data);
+          chrome.storage.local.set({ [videoId]: data });
+        } else {
+          log('Not caching error result for', videoId, ':', data.error);
+        }
         inFlight.delete(videoId);
 
         chrome.tabs.sendMessage(tabId, {

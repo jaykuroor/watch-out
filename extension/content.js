@@ -10,7 +10,7 @@ let injectRetryCount = 0;
 const MAX_INJECT_RETRIES = 20;
 const NAVIGATION_DEBOUNCE_MS = 220;
 const REQUEST_COOLDOWN_MS = 1000;
-const LOADING_TIMEOUT_MS = 30000;
+const LOADING_TIMEOUT_MS = 45000;
 
 // Local result cache — analysis starts on navigation, results stored here
 // so the sidebar can display instantly when opened.
@@ -27,6 +27,14 @@ const SUPPORTED_MODELS = new Set([
   'gemini-2.5-pro',
   'gemini-3-flash-preview',
 ]);
+
+// ----- PREFETCH CONFIG -----
+const PREFETCH_WINDOW = 6;
+const PREFETCH_MODEL = 'gemini-2.5-flash';
+const PREFETCH_DWELL_MS = 2500;
+let prefetchEnabled = false;
+let prefetchDwellTimer = null;
+let lastPrefetchedWindow = [];
 
 log('Content script loaded on', window.location.href);
 
@@ -118,11 +126,18 @@ function handleNavigationChange() {
   injectRetryCount = 0;
 
   injectTriggerButton();
-  triggerBackendAnalysis(videoId);
 
-  // If sidebar is already open, show loading or cached result for the new video
   if (sidebarVisible) {
+    triggerBackendAnalysis(videoId);
     showCurrentState();
+
+    if (prefetchEnabled && lastPrefetchedWindow.length > 0 &&
+        videoId === lastPrefetchedWindow[lastPrefetchedWindow.length - 1]) {
+      log('Prefetch: reached last prefetched short — refreshing window immediately');
+      prefetchNextShorts();
+    } else {
+      schedulePrefetch();
+    }
   }
 }
 
@@ -133,6 +148,7 @@ function onExtensionContextInvalidated(error) {
   extensionContextInvalidated = true;
   warn('Extension context invalidated. Reload this YouTube tab to reconnect.', error);
   pendingVideoIds.clear();
+  cancelPrefetch();
   if (navigationDebounceTimer) {
     clearTimeout(navigationDebounceTimer);
     navigationDebounceTimer = null;
@@ -251,6 +267,81 @@ function getModelOverride() {
   return null;
 }
 
+// ----- PREFETCH (sliding window) -----
+
+function getBufferedShortsIds() {
+  const thumbnails = document.querySelectorAll('.reel-video-in-sequence-thumbnail');
+  const ids = [];
+  thumbnails.forEach(el => {
+    const style = el.getAttribute('style') || '';
+    const match = style.match(/vi\/([a-zA-Z0-9_-]{11})\//);
+    if (match && match[1] && !ids.includes(match[1])) {
+      ids.push(match[1]);
+    }
+  });
+  return ids;
+}
+
+function triggerPrefetchAnalysis(videoId) {
+  if (extensionContextInvalidated) return;
+  if (cachedResults[videoId] || pendingVideoIds.has(videoId)) {
+    log('Prefetch skip — already cached or in-flight:', videoId);
+    return;
+  }
+  log('Prefetching analysis for', videoId);
+  pendingVideoIds.add(videoId);
+  const sent = sendAnalyzeMessage({
+    type: 'ANALYZE_SHORT',
+    videoId,
+    priority: 'low',
+    model: PREFETCH_MODEL,
+  });
+  if (!sent) {
+    pendingVideoIds.delete(videoId);
+  }
+}
+
+function prefetchNextShorts() {
+  if (!prefetchEnabled || !sidebarVisible || !currentVideoId) return;
+
+  const buffered = getBufferedShortsIds();
+  const currentIdx = buffered.indexOf(currentVideoId);
+  if (currentIdx === -1) {
+    log('Prefetch: current video not found in buffered list');
+    return;
+  }
+
+  const upcoming = buffered.slice(currentIdx + 1, currentIdx + 1 + PREFETCH_WINDOW);
+  const toPrefetch = upcoming.filter(id => !cachedResults[id] && !pendingVideoIds.has(id));
+
+  if (toPrefetch.length === 0) {
+    log('Prefetch: all upcoming shorts already cached or in-flight');
+  } else {
+    log('Prefetch: dispatching', toPrefetch.length, 'of', upcoming.length, 'upcoming shorts');
+    toPrefetch.forEach(triggerPrefetchAnalysis);
+  }
+
+  lastPrefetchedWindow = upcoming;
+}
+
+function schedulePrefetch() {
+  cancelPrefetch();
+  if (!prefetchEnabled || !sidebarVisible) return;
+  prefetchDwellTimer = setTimeout(() => {
+    prefetchDwellTimer = null;
+    if (currentVideoId && sidebarVisible) {
+      prefetchNextShorts();
+    }
+  }, PREFETCH_DWELL_MS);
+}
+
+function cancelPrefetch() {
+  if (prefetchDwellTimer) {
+    clearTimeout(prefetchDwellTimer);
+    prefetchDwellTimer = null;
+  }
+}
+
 function displayResult(videoId, data) {
   if (!window.updateFactCheckSidebar) return;
   log('Displaying result for', videoId, '— status:', data.status, 'claims:', data.claims?.length);
@@ -260,12 +351,14 @@ function displayResult(videoId, data) {
       state: 'error',
       errorMessage: data.error || 'Analysis failed for this video.',
       contextInvalidated: false,
+      prefetchEnabled,
     });
   } else if (data.status === 'no_transcript') {
     window.updateFactCheckSidebar({
       state: 'no_transcript',
       metadata: data.metadata,
       contextInvalidated: false,
+      prefetchEnabled,
     });
   } else {
     window.updateFactCheckSidebar({
@@ -276,6 +369,7 @@ function displayResult(videoId, data) {
       transcriptPreview: data.transcript_preview,
       loadingMessage: null,
       contextInvalidated: false,
+      prefetchEnabled,
     });
   }
 }
@@ -288,6 +382,7 @@ function showCurrentState() {
       loadingMessage: null,
       errorMessage: 'Extension context invalidated. Refresh this YouTube tab to continue.',
       contextInvalidated: true,
+      prefetchEnabled,
     });
     return;
   }
@@ -298,6 +393,7 @@ function showCurrentState() {
       state: 'loading',
       loadingMessage: 'Starting analysis...',
       contextInvalidated: false,
+      prefetchEnabled,
     });
   }
 }
@@ -531,7 +627,9 @@ function openSidebar() {
   sidebarVisible = true;
   log('Sidebar opened');
 
+  triggerBackendAnalysis(currentVideoId);
   showCurrentState();
+  schedulePrefetch();
 }
 
 function closeSidebar() {
@@ -539,6 +637,7 @@ function closeSidebar() {
     sidebarContainer.style.display = 'none';
   }
   sidebarVisible = false;
+  cancelPrefetch();
   log('Sidebar closed');
 
   if (window.updateFactCheckSidebar) {
@@ -548,6 +647,19 @@ function closeSidebar() {
 
 window.addEventListener('factcheck-close-sidebar', () => closeSidebar());
 window.addEventListener('factcheck-regenerate-current', () => regenerateCurrentVideo());
+window.addEventListener('factcheck-prefetch-toggled', (e) => {
+  const enabled = !!e.detail?.enabled;
+  prefetchEnabled = enabled;
+  log('Prefetch toggled:', enabled);
+  if (chrome?.storage?.local) {
+    chrome.storage.local.set({ watchout_prefetch_enabled: enabled });
+  }
+  if (enabled && sidebarVisible) {
+    schedulePrefetch();
+  } else {
+    cancelPrefetch();
+  }
+});
 window.addEventListener('error', (event) => {
   const message = String(event?.error?.message || event?.message || '');
   if (/Extension context invalidated/i.test(message)) {
@@ -568,7 +680,7 @@ if (chrome?.runtime?.onMessage?.addListener) {
       pendingVideoIds.delete(msg.videoId);
 
       if (msg.videoId !== currentVideoId) {
-        log('Received stale ANALYSIS_RESULT for non-current video:', msg.videoId, 'current:', currentVideoId);
+        log('Cached ANALYSIS_RESULT for non-current video (prefetched or stale):', msg.videoId);
       }
 
       if (sidebarVisible && msg.videoId === currentVideoId) {
@@ -611,6 +723,14 @@ if (chrome?.runtime?.onMessage?.addListener) {
 }
 
 // ----- INIT -----
+
+if (chrome?.storage?.local) {
+  chrome.storage.local.get('watchout_prefetch_enabled', (result) => {
+    prefetchEnabled = !!result.watchout_prefetch_enabled;
+    log('Prefetch setting loaded:', prefetchEnabled);
+  });
+}
+
 log('isOnShortsPage:', isOnShortsPage(), '| videoId:', getVideoIdFromUrl());
 if (isOnShortsPage()) {
   scheduleNavigationChange();

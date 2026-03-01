@@ -18,7 +18,9 @@
     errorMessage: null,
     loadingMessage: null,
     contextInvalidated: false,
+    prefetchEnabled: false,
   };
+  let _settingsOpen = false;
 
   // ── Theme tokens ──
 
@@ -574,6 +576,65 @@
     return wrap;
   }
 
+  // ── Build: Settings Panel ──
+
+  function buildSettingsPanel() {
+    const panel = el('div', {
+      marginTop: '10px',
+      padding: '10px 12px',
+      background: `linear-gradient(165deg, ${THEME.surfaceRaised}, ${THEME.surface})`,
+      border: `1px solid ${THEME.edge}`,
+      borderRadius: '10px',
+      boxShadow: `inset 2px 2px 4px ${THEME.insetDark}, inset -2px -2px 4px ${THEME.insetLight}`,
+      animation: 'watchout-unroll 0.2s ease',
+    });
+
+    const row = el('div', {
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+    });
+
+    const labelCol = el('div', { flex: '1' });
+    labelCol.appendChild(el('div', {
+      fontSize: '12px', fontWeight: '600', color: THEME.ink, fontFamily: THEME.fontDisplay,
+    }, { textContent: 'Prefetch upcoming Shorts' }));
+    labelCol.appendChild(el('div', {
+      fontSize: '10px', color: THEME.inkSubtle, marginTop: '2px', lineHeight: '1.4',
+    }, { textContent: 'Pre-analyze the next 6 Shorts for instant results' }));
+    row.appendChild(labelCol);
+
+    const enabled = !!_state.prefetchEnabled;
+    const track = el('button', {
+      width: '38px', height: '20px', borderRadius: '10px', border: 'none',
+      background: enabled
+        ? `linear-gradient(145deg, ${THEME.green}, ${THEME.cyan})`
+        : `linear-gradient(145deg, ${THEME.gray}, ${THEME.selectionBackground})`,
+      cursor: 'pointer', position: 'relative', flexShrink: '0',
+      transition: 'background 0.2s ease',
+      boxShadow: `inset 1px 1px 3px ${THEME.insetDark}`,
+    }, { 'aria-label': 'Toggle prefetch', role: 'switch', 'aria-checked': String(enabled) });
+
+    const thumb = el('div', {
+      width: '16px', height: '16px', borderRadius: '50%',
+      background: THEME.surfaceRaised,
+      position: 'absolute', top: '2px',
+      left: enabled ? '20px' : '2px',
+      transition: 'left 0.2s ease',
+      boxShadow: `1px 1px 3px ${THEME.shadowDark}`,
+    });
+    track.appendChild(thumb);
+
+    track.addEventListener('click', function () {
+      const newVal = !_state.prefetchEnabled;
+      _state.prefetchEnabled = newVal;
+      window.dispatchEvent(new CustomEvent('factcheck-prefetch-toggled', { detail: { enabled: newVal } }));
+      render();
+    });
+    row.appendChild(track);
+
+    panel.appendChild(row);
+    return panel;
+  }
+
   // ── Main render ──
 
   function render() {
@@ -643,20 +704,73 @@
     });
     hdrRow.appendChild(regenerateBtn);
 
+    const rightBtns = el('div', {
+      display: 'flex', alignItems: 'center', gap: '6px',
+      position: 'absolute', right: '0', top: '50%', transform: 'translateY(-50%)',
+    });
+
+    const gearBtn = el('button', {
+      background: `linear-gradient(160deg, ${THEME.surfaceSoft}, ${THEME.surfaceRaised})`,
+      border: `1px solid ${_settingsOpen ? THEME.blue : THEME.edge}`,
+      color: _settingsOpen ? THEME.blue : THEME.inkSubtle,
+      cursor: 'pointer', fontSize: '14px', width: '28px', height: '28px', borderRadius: '6px',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      boxShadow: `3px 3px 7px ${THEME.shadowDark}, -3px -3px 7px ${THEME.shadowLight}`,
+      transition: 'border-color 0.15s ease, color 0.15s ease',
+    }, { 'aria-label': 'Settings' });
+    const gearSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    gearSvg.setAttribute('width', '15');
+    gearSvg.setAttribute('height', '15');
+    gearSvg.setAttribute('viewBox', '0 0 24 24');
+    gearSvg.setAttribute('fill', 'none');
+    gearSvg.setAttribute('stroke', 'currentColor');
+    gearSvg.setAttribute('stroke-width', '2');
+    gearSvg.setAttribute('stroke-linecap', 'round');
+    gearSvg.setAttribute('stroke-linejoin', 'round');
+    const gearPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    gearPath.setAttribute('d', 'M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z');
+    gearSvg.appendChild(gearPath);
+    const gearCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    gearCircle.setAttribute('cx', '12');
+    gearCircle.setAttribute('cy', '12');
+    gearCircle.setAttribute('r', '3');
+    gearSvg.appendChild(gearCircle);
+    gearBtn.appendChild(gearSvg);
+
+    gearBtn.addEventListener('click', function () {
+      _settingsOpen = !_settingsOpen;
+      render();
+    });
+    rightBtns.appendChild(gearBtn);
+
     const closeBtn = el('button', {
       background: `linear-gradient(160deg, ${THEME.surfaceSoft}, ${THEME.surfaceRaised})`, border: `1px solid ${THEME.edge}`, color: THEME.inkSubtle,
       cursor: 'pointer', fontSize: '16px', width: '28px', height: '28px', borderRadius: '6px',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       boxShadow: `3px 3px 7px ${THEME.shadowDark}, -3px -3px 7px ${THEME.shadowLight}`,
-      position: 'absolute', right: '0', top: '50%', transform: 'translateY(-50%)',
     }, { 'aria-label': 'Close sidebar', textContent: '\u2715' });
     closeBtn.addEventListener('click', function () {
       window.dispatchEvent(new CustomEvent('factcheck-close-sidebar'));
     });
-    hdrRow.appendChild(closeBtn);
+    rightBtns.appendChild(closeBtn);
+    hdrRow.appendChild(rightBtns);
     hdr.appendChild(hdrRow);
 
+    let settingsPanel = null;
+    if (_settingsOpen) {
+      settingsPanel = buildSettingsPanel();
+      hdr.appendChild(settingsPanel);
+    }
+
     shell.appendChild(hdr);
+
+    if (_settingsOpen) {
+      shell.addEventListener('click', function (e) {
+        if (gearBtn.contains(e.target) || (settingsPanel && settingsPanel.contains(e.target))) return;
+        _settingsOpen = false;
+        render();
+      });
+    }
 
     // ── Body ──
     const body = el('div', {
