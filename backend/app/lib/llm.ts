@@ -75,8 +75,8 @@ interface VerifyDiagnostics {
 }
 
 const EXTRACT_TRANSCRIPT_BUDGET_CHARS = 6500;
-const EXTRACT_TIMEOUT_MS = 10000;
-const VERIFY_TIMEOUT_MS = 10000;
+const EXTRACT_TIMEOUT_MS = 12000;
+const VERIFY_TIMEOUT_MS = 15000;
 
 export async function extractClaims(
   transcript: string,

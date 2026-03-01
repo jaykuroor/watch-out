@@ -7,27 +7,27 @@ import { computeOverallScore } from '@/app/lib/scoring';
 const cache = new Map<string, AnalysisResponse>();
 const STAGE_BUDGETS = {
   fetchVideoMs: 15000,
-  extractClaimsMs: 10000,
+  extractClaimsMs: 12000,
   searchQueryMs: 6000,
-  verifyClaimsMs: 10000,
+  verifyClaimsMs: 15000,
 } as const;
 
 function getStageBudgets(priority: string) {
   if (priority === 'low') {
     return {
       fetchVideoMs: 10000,
-      extractClaimsMs: 7000,
+      extractClaimsMs: 9000,
       searchQueryMs: 4500,
-      verifyClaimsMs: 7000,
+      verifyClaimsMs: 12000,
       maxQueries: 2,
     } as const;
   }
   if (priority === 'medium') {
     return {
       fetchVideoMs: 12000,
-      extractClaimsMs: 8500,
+      extractClaimsMs: 10000,
       searchQueryMs: 5500,
-      verifyClaimsMs: 8500,
+      verifyClaimsMs: 12000,
       maxQueries: 3,
     } as const;
   }
@@ -142,16 +142,29 @@ export async function POST(req: NextRequest) {
     // Step 2: Extract claims + search queries (LLM call #1)
     console.log(`[Analyze] Extracting claims via Gemini...`);
     const tExtractStart = Date.now();
-    const extractResult = await extractClaims(transcript.text, metadata, {
+    let extractResult = await extractClaims(transcript.text, metadata, {
       modelId,
       timeoutMs: budgets.extractClaimsMs,
       transcriptBudgetChars: 6500,
     });
+
+    if (extractResult.claims.length === 0 && extractResult.diagnostics?.timedOut) {
+      console.warn(`[Analyze] extractClaims timed out with 0 claims — retrying once`);
+      extractResult = await extractClaims(transcript.text, metadata, {
+        modelId,
+        timeoutMs: budgets.extractClaimsMs + 5000,
+        transcriptBudgetChars: 6500,
+      });
+    }
+
     const tExtractEnd = Date.now();
     const { claims, searchQueries, usage: extractUsage, diagnostics: extractDiagnostics } = extractResult;
     console.log(`[Analyze] Extracted ${claims.length} claims, ${searchQueries.length} search queries`);
 
     if (claims.length === 0) {
+      console.log(`[Analyze] No claims found — skipping search and verify stages (early exit)`);
+      const extractTimedOut = extractDiagnostics?.timedOut ?? false;
+
       const tTotal = Date.now() - t0;
       const response: AnalysisResponse = {
         videoId,
@@ -177,26 +190,37 @@ export async function POST(req: NextRequest) {
               ...(extractDiagnostics && { extract: extractDiagnostics }),
               timeouts: {
                 fetchVideo: false,
-                extractClaims: extractDiagnostics?.timedOut ?? false,
+                extractClaims: extractTimedOut,
                 verifyClaims: false,
               },
             },
           },
         }),
       };
-      if (!benchmark) cache.set(cacheKey, response);
+      // Don't cache if extract timed out — result is degraded, next attempt may succeed
+      if (!benchmark && !extractTimedOut) cache.set(cacheKey, response);
       return NextResponse.json(response);
     }
 
     // Step 3: Web search for evidence (Tavily)
     console.log(`[Analyze] Searching web via Tavily...`);
     const tSearchStart = Date.now();
-    const maxQueries = Math.min(budgets.maxQueries, claims.length <= 3 ? 3 : 5);
-    const searchResult = await searchWeb(searchQueries, {
-      maxQueries,
+    const maxSearchQueries = Math.min(budgets.maxQueries, claims.length <= 3 ? 3 : 5);
+    let searchResult = await searchWeb(searchQueries, {
+      maxQueries: maxSearchQueries,
       timeoutMs: budgets.searchQueryMs,
       maxResultsPerQuery: 4,
     });
+
+    if (searchResult.results.length === 0 && (searchResult.metrics.timedOutQueries > 0 || searchResult.metrics.failedQueries > 0)) {
+      console.warn(`[Analyze] Search returned 0 results (${searchResult.metrics.timedOutQueries} timed out, ${searchResult.metrics.failedQueries} failed) — retrying once`);
+      searchResult = await searchWeb(searchQueries, {
+        maxQueries: maxSearchQueries,
+        timeoutMs: budgets.searchQueryMs + 3000,
+        maxResultsPerQuery: 4,
+      });
+    }
+
     const tSearchEnd = Date.now();
     const searchResults = searchResult.results;
     console.log(`[Analyze] Found ${searchResults.length} search results`);

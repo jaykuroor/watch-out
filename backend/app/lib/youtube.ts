@@ -15,6 +15,28 @@ import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
+// Limit concurrent yt-dlp processes to avoid YouTube rate-limiting
+// when multiple prefetch requests fire simultaneously.
+const YT_DLP_MAX_CONCURRENT = 2;
+let ytdlpRunning = 0;
+const ytdlpQueue: (() => void)[] = [];
+
+function acquireYtdlpSlot(): Promise<void> {
+  if (ytdlpRunning < YT_DLP_MAX_CONCURRENT) {
+    ytdlpRunning++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => {
+    ytdlpQueue.push(() => { ytdlpRunning++; resolve(); });
+  });
+}
+
+function releaseYtdlpSlot(): void {
+  ytdlpRunning--;
+  const next = ytdlpQueue.shift();
+  if (next) next();
+}
+
 export interface VideoMetadata {
   title: string;
   channel: string;
@@ -45,7 +67,7 @@ export async function fetchVideoData(
   await mkdir(tempDir, { recursive: true });
 
   try {
-    await execFileAsync('yt-dlp', [
+    const ytdlpArgs = [
       '--write-subs', '--write-auto-subs',
       '--sub-lang', 'en',
       '--sub-format', 'vtt',
@@ -54,7 +76,25 @@ export async function fetchVideoData(
       '--no-warnings',
       '-o', join(tempDir, '%(id)s'),
       `https://www.youtube.com/shorts/${videoId}`,
-    ], { timeout: timeoutMs });
+    ];
+
+    await acquireYtdlpSlot();
+    try {
+      await execFileAsync('yt-dlp', ytdlpArgs, { timeout: timeoutMs });
+    } catch (firstError: unknown) {
+      const firstMsg = firstError instanceof Error ? firstError.message : String(firstError);
+      if (firstMsg.includes('ENOENT') || firstMsg.includes('ETIMEDOUT') || firstMsg.includes('killed')) {
+        throw firstError;
+      }
+      // Retry once after a short delay for transient failures (rate-limiting, network)
+      console.warn(`[yt-dlp] First attempt failed for ${videoId}, retrying in 2s...`);
+      await new Promise(r => setTimeout(r, 2000));
+      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      await mkdir(tempDir, { recursive: true });
+      await execFileAsync('yt-dlp', ytdlpArgs, { timeout: timeoutMs });
+    } finally {
+      releaseYtdlpSlot();
+    }
 
     const files = await readdir(tempDir);
 
@@ -116,7 +156,25 @@ export async function fetchVideoData(
       throw new Error(`yt-dlp timed out fetching video ${videoId}`);
     }
 
-    throw new Error(`yt-dlp failed for ${videoId}: ${msg}`);
+    // yt-dlp command failed — likely no English subtitles or video unavailable.
+    // Try to salvage metadata from any info.json that was written before the failure.
+    console.warn(`[yt-dlp] Command failed for ${videoId}, attempting metadata recovery: ${msg.slice(0, 120)}`);
+    let metadata: VideoMetadata = { title: 'Unknown Title', channel: 'Unknown Channel' };
+    try {
+      const files = await readdir(tempDir);
+      const infoFile = files.find(f => f.endsWith('.info.json'));
+      if (infoFile) {
+        const raw = await readFile(join(tempDir, infoFile), 'utf-8');
+        const info = JSON.parse(raw);
+        metadata = {
+          title: info.title || 'Unknown Title',
+          channel: info.channel || info.uploader || 'Unknown Channel',
+        };
+      }
+    } catch { /* no metadata to recover */ }
+
+    console.log(`[yt-dlp] Returning no_transcript for ${videoId} (metadata: "${metadata.title}")`);
+    return { metadata, transcript: { found: false, text: '' } };
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
