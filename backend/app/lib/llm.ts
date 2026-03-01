@@ -5,14 +5,14 @@
 //   1. extractClaims: transcript → claims[] + searchQueries[] + contentType
 //   2. verifyClaims: claims + search snippets → verdicts
 //
-// Uses gemini-2.0-flash (fast, cheap, good quality).
+// Uses gemini-2.5-flash-lite (fast, cheap, good quality).
 // Google AI free tier: 15 RPM, 1M tokens/day — plenty for hackathon.
 // =============================================================
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
 
 // ============================================
 // LLM CALL #1: Extract claims + search queries
