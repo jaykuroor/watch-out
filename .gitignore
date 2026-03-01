@@ -13,3 +13,5 @@ captions/
 .DS_Store
 backend/.env.local
 backend/.next/
+CLAUDE.md
+backend/scripts/benchmark-results/raw-*.json
