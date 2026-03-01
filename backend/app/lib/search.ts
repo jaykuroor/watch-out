@@ -14,8 +14,8 @@ export interface SearchResult {
 }
 
 export async function searchWeb(queries: string[]): Promise<SearchResult[]> {
-  // Cap at 2 queries per the spec
-  const limitedQueries = queries.slice(0, 2);
+  // Cap at 5 queries to support up to 10 claims
+  const limitedQueries = queries.slice(0, 5);
 
   // Run searches in parallel
   const searches = limitedQueries.map(async (query) => {
@@ -27,7 +27,7 @@ export async function searchWeb(queries: string[]): Promise<SearchResult[]> {
           api_key: process.env.TAVILY_API_KEY,
           query,
           search_depth: 'basic',        // faster than 'advanced'
-          max_results: 4,
+          max_results: 5,
           include_answer: false,
           include_raw_content: false
         })
