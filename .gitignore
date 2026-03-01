@@ -10,3 +10,7 @@ captions/
 **/dist/sidebar.bundle.js
 *.log
 .DS_Store
+.next/
+.env
+.env.local
+.env.example
