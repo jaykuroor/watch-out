@@ -236,6 +236,14 @@ function injectFloatingButton() {
 }
 
 function createAndInsertButton(container) {
+  if (!document.getElementById('watchout-rubik-font')) {
+    const fontLink = document.createElement('link');
+    fontLink.id = 'watchout-rubik-font';
+    fontLink.rel = 'stylesheet';
+    fontLink.href = 'https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap';
+    document.head.appendChild(fontLink);
+  }
+
   triggerButton = document.createElement('button');
   triggerButton.id = 'yt-factcheck-trigger';
   triggerButton.innerHTML = `
@@ -243,28 +251,29 @@ function createAndInsertButton(container) {
       width: 48px;
       height: 48px;
       border-radius: 50%;
-      background: rgba(30, 30, 30, 0.85);
-      border: 2px solid rgba(255, 255, 255, 0.2);
+      background: linear-gradient(145deg, #3a3a3a, #2c2c2c);
+      border: 1px solid rgba(255, 255, 255, 0.16);
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
       transition: all 0.2s ease;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
       margin-bottom: 8px;
     ">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M9 11l3 3L22 4"/>
-        <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7"/>
+        <circle cx="12" cy="12" r="3"/>
       </svg>
     </div>
     <span style="
-      color: white;
+      color: #abb2bf;
       font-size: 10px;
       text-align: center;
       display: block;
       margin-top: -4px;
       margin-bottom: 12px;
-      font-family: 'Roboto', Arial, sans-serif;
+      font-family: 'Rubik', Arial, sans-serif;
     ">Verify</span>
   `;
   triggerButton.style.cssText = `
@@ -280,12 +289,12 @@ function createAndInsertButton(container) {
 
   const circle = triggerButton.querySelector('div');
   triggerButton.addEventListener('mouseenter', () => {
-    circle.style.background = 'rgba(60, 60, 60, 0.95)';
-    circle.style.borderColor = 'rgba(255, 255, 255, 0.4)';
+    circle.style.background = 'linear-gradient(145deg, #454545, #343434)';
+    circle.style.borderColor = 'rgba(255, 255, 255, 0.26)';
   });
   triggerButton.addEventListener('mouseleave', () => {
-    circle.style.background = 'rgba(30, 30, 30, 0.85)';
-    circle.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+    circle.style.background = 'linear-gradient(145deg, #3a3a3a, #2c2c2c)';
+    circle.style.borderColor = 'rgba(255, 255, 255, 0.16)';
   });
 
   triggerButton.addEventListener('click', (e) => {

@@ -13,3 +13,4 @@ captions/
 .DS_Store
 backend/.env.local
 backend/.next/
+tasks/lessons.md
