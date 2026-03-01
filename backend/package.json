@@ -6,11 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "benchmark": "tsx scripts/benchmark-models.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
-    "next": "^14.2.0",
+    "jsonrepair": "^3.13.2",
+    "next": "^16.1.6",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -18,8 +20,9 @@
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
-    "eslint": "^8.0.0",
-    "eslint-config-next": "^14.2.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.1.6",
+    "tsx": "^4.21.0",
     "typescript": "^5.0.0"
   }
 }
