@@ -5,3 +5,8 @@ test.ts
 transcript-fix.md
 mock/
 captions/
+.env.local
+.next/
+**/dist/sidebar.bundle.js
+*.log
+.DS_Store
