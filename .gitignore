@@ -5,12 +5,11 @@ test.ts
 transcript-fix.md
 mock/
 captions/
+.env
 .env.local
 .next/
 **/dist/sidebar.bundle.js
 *.log
 .DS_Store
-.next/
-.env
-.env.local
-.env.example
+backend/.env.local
+backend/.next/
