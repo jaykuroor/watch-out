@@ -16,6 +16,8 @@
     claims: [],
     transcriptPreview: null,
     errorMessage: null,
+    loadingMessage: null,
+    contextInvalidated: false,
   };
 
   // ── Theme tokens ──
@@ -204,7 +206,7 @@
 
   // ── Build: Loading Skeleton ──
 
-  function buildLoading() {
+  function buildLoading(loadingMessage) {
     const wrap = el('div', {});
     const shimmer = {
       background: 'linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.04) 75%)',
@@ -219,7 +221,7 @@
     const txt = el('div', {
       textAlign: 'center', color: THEME.inkSubtle, fontSize: '12px',
       marginTop: '20px', animation: 'watchout-pulse 2s ease-in-out infinite',
-    }, { textContent: 'Analyzing claims...' });
+    }, { textContent: loadingMessage || 'Analyzing claims...' });
     wrap.appendChild(txt);
     return wrap;
   }
@@ -601,6 +603,8 @@
     const hdr = el('div', { padding: '16px 16px 12px', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: '0' });
 
     const hdrRow = el('div', { display: 'flex', alignItems: 'center', minHeight: '30px', position: 'relative' });
+    const isLoading = _state.state === 'loading';
+    const disableRegenerate = isLoading || _state.contextInvalidated;
     const brand = el('div', { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%' });
     brand.appendChild(el('span', { fontSize: '16px', color: THEME.inkMuted }, { textContent: '\uD83D\uDC41\uFE0F' }));
     brand.appendChild(el('span', {
@@ -612,6 +616,32 @@
       textShadow: '1px 1px 1px rgba(0,0,0,0.28)',
     }, { textContent: 'Watch Out' }));
     hdrRow.appendChild(brand);
+
+    const regenerateBtn = el('button', {
+      background: `linear-gradient(160deg, ${THEME.surfaceSoft}, ${THEME.surfaceRaised})`,
+      border: `1px solid ${THEME.edge}`,
+      color: disableRegenerate ? THEME.inkSubtle : THEME.ink,
+      cursor: disableRegenerate ? 'not-allowed' : 'pointer',
+      fontSize: '15px',
+      width: '28px',
+      height: '28px',
+      borderRadius: '6px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxShadow: `3px 3px 7px ${THEME.shadowDark}, -3px -3px 7px ${THEME.shadowLight}`,
+      position: 'absolute',
+      left: '0',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      opacity: disableRegenerate ? '0.65' : '1',
+    }, { 'aria-label': 'Regenerate analysis', textContent: '\u21BB' });
+    regenerateBtn.disabled = disableRegenerate;
+    regenerateBtn.addEventListener('click', function () {
+      if (disableRegenerate) return;
+      window.dispatchEvent(new CustomEvent('factcheck-regenerate-current'));
+    });
+    hdrRow.appendChild(regenerateBtn);
 
     const closeBtn = el('button', {
       background: `linear-gradient(160deg, ${THEME.surfaceSoft}, ${THEME.surfaceRaised})`, border: `1px solid ${THEME.edge}`, color: THEME.inkSubtle,
@@ -639,7 +669,7 @@
     });
 
     if (_state.state === 'loading') {
-      body.appendChild(buildLoading());
+      body.appendChild(buildLoading(_state.loadingMessage));
     }
 
     if (_state.state === 'no_transcript') {
