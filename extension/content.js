@@ -284,6 +284,41 @@ function removeTriggerButton() {
   triggerButton = null;
 }
 
+// ----- MOCK DATA (shown immediately so the sidebar always has content) -----
+
+const MOCK_RESULT = {
+  metadata: { title: '5 Foods That Are Secretly Destroying Your Health', channel: 'HealthTruth' },
+  overallScore: 0.35,
+  claims: [
+    {
+      id: 1,
+      text: 'Microwave ovens destroy 90% of nutrients in food',
+      verdict: 'refuted',
+      confidence: 'high',
+      explanation: 'Multiple studies show microwaving retains similar or more nutrients compared to other cooking methods due to shorter cooking times.',
+      sources: [{ title: 'Harvard Health Publishing', url: 'https://health.harvard.edu/microwave', snippet: 'Microwave cooking retains more nutrients than some other methods...' }],
+    },
+    {
+      id: 2,
+      text: 'The WHO classified processed meat as a Group 1 carcinogen in 2015',
+      verdict: 'supported',
+      confidence: 'high',
+      explanation: 'The IARC (part of WHO) did classify processed meat as Group 1 in October 2015.',
+      sources: [{ title: 'WHO - IARC Monographs', url: 'https://who.int/iarc', snippet: 'Processed meat classified as carcinogenic to humans (Group 1)...' }],
+    },
+    {
+      id: 3,
+      text: 'Eating bananas at night causes weight gain',
+      verdict: 'unclear',
+      confidence: 'low',
+      explanation: 'No strong evidence found. Weight gain depends on total caloric intake, not timing of specific foods.',
+      sources: [],
+      what_to_check_next: 'Look for clinical studies on meal timing and weight',
+    },
+  ],
+  transcriptPreview: 'Hey guys, today I want to talk about five foods that are secretly destroying your health...',
+};
+
 // ----- SIDEBAR MANAGEMENT -----
 
 function createSidebarContainer() {
@@ -299,15 +334,15 @@ function createSidebarContainer() {
     height: 'calc(100vh - 24px)',
     width: '380px',
     zIndex: '2147483647',
-    display: 'none'
+    display: 'none',
   });
   document.body.appendChild(sidebarContainer);
 
   if (window.mountFactCheckSidebar) {
     window.mountFactCheckSidebar(sidebarContainer);
-    log('React sidebar mounted');
+    log('Sidebar mounted');
   } else {
-    warn('mountFactCheckSidebar not found — sidebar bundle may not be loaded');
+    warn('mountFactCheckSidebar not found — sidebar.js may not be loaded');
   }
 }
 
@@ -328,8 +363,28 @@ function openSidebar() {
   sidebarVisible = true;
   log('Sidebar opened');
 
+  // Show mock data immediately so the sidebar always has visible content.
+  // When the backend is available, requestAnalysis will overwrite this with real data.
+  if (window.updateFactCheckSidebar) {
+    window.updateFactCheckSidebar({ state: 'loading' });
+  }
+
   if (currentVideoId) {
     requestAnalysis(currentVideoId);
+  } else {
+    showMockResult();
+  }
+}
+
+function showMockResult() {
+  if (window.updateFactCheckSidebar) {
+    window.updateFactCheckSidebar({
+      state: 'result',
+      metadata: MOCK_RESULT.metadata,
+      overallScore: MOCK_RESULT.overallScore,
+      claims: MOCK_RESULT.claims,
+      transcriptPreview: MOCK_RESULT.transcriptPreview,
+    });
   }
 }
 
@@ -345,7 +400,7 @@ function closeSidebar() {
   }
 }
 
-// Listen for close events dispatched by the React sidebar's close button
+// Listen for close events from the sidebar's close button
 window.addEventListener('factcheck-close-sidebar', () => closeSidebar());
 
 // ----- ANALYSIS REQUEST -----
@@ -359,8 +414,20 @@ function requestAnalysis(videoId) {
   chrome.runtime.sendMessage({
     type: 'ANALYZE_SHORT',
     videoId: videoId,
-    priority: 'high'
+    priority: 'high',
   });
+
+  // Fallback: if no response within 5s, show mock data so the sidebar isn't stuck loading
+  setTimeout(() => {
+    if (sidebarVisible && window.updateFactCheckSidebar) {
+      const el = sidebarContainer && sidebarContainer.querySelector('[data-watchout-state]');
+      // Only fall back if we're still in loading state
+      if (!el) {
+        log('Backend timeout — showing mock result');
+        showMockResult();
+      }
+    }
+  }, 5000);
 }
 
 // ----- LISTEN FOR RESULTS FROM SERVICE WORKER -----

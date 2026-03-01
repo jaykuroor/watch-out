@@ -1,4 +1,8 @@
 hackathon-plan.md
 project-structure.md
-progress-report.md
-transcript-fix.md
+node_modules/
+.env.local
+.next/
+**/dist/sidebar.bundle.js
+*.log
+.DS_Store
