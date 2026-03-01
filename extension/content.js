@@ -14,6 +14,13 @@ const MAX_INJECT_RETRIES = 20;
 let cachedResults = {};
 let pendingVideoIds = new Set();
 
+// Prefetch state: initial batch runs once; scroll-ahead runs on each navigation.
+let hasInitialPrefetched = false;
+
+const PREFETCH_INITIAL_DELAY_MS = 2000;
+const PREFETCH_STAGGER_MS = 500;
+const PREFETCH_INITIAL_COUNT = 5;
+
 log('Content script loaded on', window.location.href);
 
 // ----- VIDEO ID DETECTION -----
@@ -96,6 +103,16 @@ function handleNavigationChange() {
   injectTriggerButton();
   triggerBackendAnalysis(videoId);
 
+  // Prefetch: initial batch of 5 on launch, then 1 ahead on each scroll
+  log('[Prefetch] Scheduling prefetch in', PREFETCH_INITIAL_DELAY_MS, 'ms —', hasInitialPrefetched ? 'scroll-ahead (next 1)' : 'initial batch (first 5)');
+  setTimeout(() => {
+    if (!hasInitialPrefetched) {
+      initialPrefetch();
+    } else {
+      prefetchNext();
+    }
+  }, PREFETCH_INITIAL_DELAY_MS);
+
   // If sidebar is already open, show loading or cached result for the new video
   if (sidebarVisible) {
     showCurrentState();
@@ -104,17 +121,17 @@ function handleNavigationChange() {
 
 // ----- ANALYSIS (decoupled from sidebar) -----
 
-function triggerBackendAnalysis(videoId) {
+function triggerBackendAnalysis(videoId, priority = 'high') {
   if (cachedResults[videoId] || pendingVideoIds.has(videoId)) {
     log('Skipping analysis — already cached or in-flight:', videoId);
     return;
   }
-  log('Auto-triggering analysis for', videoId);
+  log(priority === 'high' ? 'Auto-triggering' : 'Prefetching', 'analysis for', videoId);
   pendingVideoIds.add(videoId);
   chrome.runtime.sendMessage({
     type: 'ANALYZE_SHORT',
     videoId: videoId,
-    priority: 'high',
+    priority: priority,
   });
 }
 
@@ -146,6 +163,7 @@ function displayResult(videoId, data) {
 function showCurrentState() {
   if (!window.updateFactCheckSidebar) return;
   if (currentVideoId && cachedResults[currentVideoId]) {
+    log('[Prefetch] Cache hit — instant display for', currentVideoId);
     displayResult(currentVideoId, cachedResults[currentVideoId]);
   } else {
     window.updateFactCheckSidebar({ state: 'loading' });
@@ -161,6 +179,118 @@ function findActiveRenderer() {
     document.querySelector('ytd-reel-video-renderer[selected]') ||
     document.querySelector('ytd-reel-video-renderer')
   );
+}
+
+// ----- PREFETCH: EXTRACT VIDEO IDS FROM DOM -----
+
+/**
+ * Extracts video IDs from ytd-reel-video-renderer elements in DOM order.
+ * Tries: a[href*="/shorts/"], data attrs, thumbnail background-image, video src.
+ * Returns array of { renderer, videoId } for ordered prefetch logic.
+ */
+function getRendererVideoIds() {
+  const renderers = document.querySelectorAll('ytd-reel-video-renderer');
+  const result = [];
+  const seenIds = new Set();
+
+  for (const renderer of renderers) {
+    let videoId = null;
+
+    // 1. Try <a href="/shorts/VIDEO_ID"> or similar
+    const link = renderer.querySelector('a[href*="/shorts/"]');
+    if (link && link.href) {
+      const match = link.href.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
+      if (match) videoId = match[1];
+    }
+
+    // 2. Try data-video-id or similar attribute
+    if (!videoId && renderer.dataset?.videoId) {
+      videoId = renderer.dataset.videoId;
+    }
+    if (!videoId && renderer.getAttribute?.('video-id')) {
+      videoId = renderer.getAttribute('video-id');
+    }
+
+    // 3. Try thumbnail background image URL:
+    // https://i.ytimg.com/vi/<VIDEO_ID>/frame0.jpg
+    if (!videoId) {
+      const thumb =
+        renderer.querySelector('.reel-video-in-sequence-thumbnail') ||
+        renderer.closest('.reel-video-in-sequence-new')?.querySelector('.reel-video-in-sequence-thumbnail');
+      const bgImage =
+        thumb?.style?.backgroundImage ||
+        thumb?.getAttribute?.('style') ||
+        '';
+      const bgMatch = bgImage.match(/\/vi\/([a-zA-Z0-9_-]{11})\/frame\d+\.jpg/);
+      if (bgMatch) videoId = bgMatch[1];
+    }
+
+    // 4. Try video element src (blob URLs may not help; some layouts use video ID in data)
+    if (!videoId) {
+      const video = renderer.querySelector('video');
+      if (video?.src) {
+        const vMatch = video.src.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+        if (vMatch) videoId = vMatch[1];
+      }
+    }
+
+    if (videoId && !seenIds.has(videoId)) {
+      seenIds.add(videoId);
+      result.push({ renderer, videoId });
+    }
+  }
+
+  log('[Prefetch] getRendererVideoIds: found', renderers.length, 'renderers, extracted', result.length, 'IDs:', result.map((r) => r.videoId));
+  return result;
+}
+
+/**
+ * Prefetch the first 5 visible Shorts on launch. Called once after initial navigation.
+ * Skips the current video (already analyzed with high priority).
+ */
+function initialPrefetch() {
+  if (hasInitialPrefetched) return;
+  hasInitialPrefetched = true;
+
+  const items = getRendererVideoIds();
+  const toPrefetch = items
+    .filter((item) => item.videoId !== currentVideoId)
+    .slice(0, PREFETCH_INITIAL_COUNT);
+
+  log('[Prefetch] initialPrefetch: found', items.length, 'renderers, prefetching', toPrefetch.length, 'IDs:', toPrefetch.map((i) => i.videoId));
+
+  toPrefetch.forEach((item, i) => {
+    setTimeout(() => {
+      triggerBackendAnalysis(item.videoId, 'low');
+    }, i * PREFETCH_STAGGER_MS);
+  });
+}
+
+/**
+ * Prefetch the next 1 Short ahead of the active one. Called on each navigation after initial batch.
+ */
+function prefetchNext() {
+  const items = getRendererVideoIds();
+  const active = findActiveRenderer();
+  if (!active || items.length === 0) {
+    log('[Prefetch] prefetchNext: no renderers or active — skipping');
+    return;
+  }
+
+  const activeIndex = items.findIndex((item) => item.renderer === active);
+  if (activeIndex === -1) {
+    log('[Prefetch] prefetchNext: active renderer not in items list — skipping');
+    return;
+  }
+
+  const nextItem = items[activeIndex + 1];
+  if (!nextItem) {
+    log('[Prefetch] prefetchNext: no next Short after index', activeIndex, '(end of feed)');
+    return;
+  }
+
+  log('[Prefetch] prefetchNext: active index', activeIndex, ', next Short', nextItem.videoId);
+  triggerBackendAnalysis(nextItem.videoId, 'low');
 }
 
 // ----- FIND THE ACTIONS CONTAINER -----
@@ -372,6 +502,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'ANALYSIS_RESULT' && msg.videoId) {
     cachedResults[msg.videoId] = msg.data;
     pendingVideoIds.delete(msg.videoId);
+    log('[Prefetch] Result received for', msg.videoId, '— cached. Total cached:', Object.keys(cachedResults).length);
 
     if (sidebarVisible && msg.videoId === currentVideoId) {
       displayResult(msg.videoId, msg.data);

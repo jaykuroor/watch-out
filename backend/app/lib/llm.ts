@@ -78,7 +78,7 @@ YOUR TASK:
 
 2. Write a 1-sentence summary of what this video is about (always do this regardless of content type).
 
-3. Extract up to 10 verifiable factual claims. Order claims by IMPORTANCE — the most significant claims first. Include claims that are:
+3. Extract up to 6 verifiable factual claims. Order claims by IMPORTANCE — the most significant claims first. Include claims that are:
    - Verifiable against external sources (not pure opinion)
    - Specific enough to search for (has a concrete fact, number, name, or event)
    This includes statistics, historical claims, scientific statements, "did you know" facts, causal claims ("X causes Y"), and attributed claims ("studies show...").
