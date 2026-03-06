@@ -1,5 +1,7 @@
 # 👁️ Watch Out
 
+https://github.com/user-attachments/assets/957ca583-3076-44aa-84d5-2fff5b2d569a
+
 **Real-time fact-checking for YouTube Shorts.**
 
 Watch Out is a Chrome extension that automatically analyzes claims made in YouTube Shorts, verifies them against trusted web sources, and presents a verdict — right inside the YouTube interface. No extra tabs, no copy-pasting. One tap, full report.
